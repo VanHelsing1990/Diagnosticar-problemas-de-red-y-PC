@@ -13,7 +13,7 @@ Donada por [marchweb.com.ar](https://marchweb.com.ar) para uso libre de la comun
 - Test de acceso remoto (RDP)
 - Monitoreo continuo para detectar cortes intermitentes (wifi o internet que "va y viene"), con cronología detallada de cada corte
 - Averiguar el proveedor de Internet (ISP) actual
-- Ver dispositivos conectados a la red local (PCs, impresoras, routers, etc.)
+- Ver dispositivos conectados a la red local (PCs, impresoras, routers, etc.), identificando la marca de cada uno por su MAC (HP, Epson, Zebra, Cisco, etc.)
 - Arreglo rápido de red (renovar IP y limpiar DNS)
 - Calidad de la conexión WiFi (intensidad, canal)
 - Historial de desconexiones de WiFi

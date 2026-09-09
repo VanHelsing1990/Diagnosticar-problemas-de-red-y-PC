@@ -1,0 +1,5 @@
+# Base de fabricantes MAC descargada (se genera con la opcion del menu, no es codigo)
+FabricantesMac.csv
+
+# Logs de testeos guardados por el usuario
+Testeos/*.txt

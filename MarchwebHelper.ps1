@@ -729,9 +729,69 @@ function Menu-InfoProveedor {
     Agregar-Resultado -Prueba "Proveedor de Internet" -Destino $info.query -Estado ("OK ({0})" -f $info.isp)
 }
 
+function Obtener-RutaFabricantesMac {
+    Join-Path $ScriptDir "FabricantesMac.csv"
+}
+
+function Cargar-FabricantesMac {
+    $ruta = Obtener-RutaFabricantesMac
+    if (-not (Test-Path $ruta)) { return $null }
+    $tabla = @{}
+    Get-Content $ruta -ErrorAction SilentlyContinue | ForEach-Object {
+        $partes = $_ -split ',', 2
+        if ($partes.Count -eq 2 -and $partes[0].Length -eq 6) { $tabla[$partes[0]] = $partes[1] }
+    }
+    if ($tabla.Count -eq 0) { return $null }
+    return $tabla
+}
+
+function Buscar-Fabricante {
+    param($Tabla, [string]$Mac)
+    if (-not $Tabla -or [string]::IsNullOrWhiteSpace($Mac)) { return $null }
+    $prefijo = ($Mac -replace '[:\-]', '').ToUpper()
+    if ($prefijo.Length -lt 6) { return $null }
+    return $Tabla[$prefijo.Substring(0, 6)]
+}
+
+function Actualizar-BaseFabricantesMac {
+    Titulo "ACTUALIZAR BASE DE FABRICANTES (MAC)" "Descarga la lista oficial de fabricantes de tarjetas de red (IEEE) para poder identificar la marca de cada equipo (HP, Epson, Zebra, Cisco, TP-Link, etc) a partir de su MAC."
+    Log "Cuando usar esto: la primera vez que quieras ver la marca de cada dispositivo en 'Ver dispositivos conectados a la red', o cada tanto para actualizarla. Necesita internet solo esta vez: despues queda guardada y funciona sin conexion." "DarkGray"
+    Log ""
+    $continuar = Read-Host "Deseas ejecutar esto? (s/n)"
+    if ($continuar -ne "s") { Log "Cancelado." "DarkYellow"; return }
+
+    Log ""
+    Log "Descargando la lista de fabricantes (IEEE), puede tardar unos segundos..." "Yellow"
+    try {
+        $resp = Invoke-WebRequest -Uri "https://standards-oui.ieee.org/oui/oui.txt" -UseBasicParsing -TimeoutSec 30
+        $lineas = $resp.Content -split "`n"
+        $filas = @()
+        foreach ($linea in $lineas) {
+            $m = [regex]::Match($linea, '^\s*([0-9A-Fa-f]{2}-[0-9A-Fa-f]{2}-[0-9A-Fa-f]{2})\s+\(hex\)\s+(.+?)\s*$')
+            if ($m.Success) {
+                $prefijo = ($m.Groups[1].Value -replace '-', '').ToUpper()
+                $fabricante = ($m.Groups[2].Value -replace ',', ' ').Trim()
+                $filas += "$prefijo,$fabricante"
+            }
+        }
+        if ($filas.Count -eq 0) {
+            Log "Se descargo el archivo pero no se pudo interpretar el formato." "Red"
+            Agregar-Resultado -Prueba "Base de fabricantes MAC" -Destino "IEEE" -Estado "FALLA (formato)"
+            return
+        }
+        $filas | Set-Content -Path (Obtener-RutaFabricantesMac) -Encoding UTF8
+        Log ("Listo: se guardaron {0} fabricantes. Ya se puede usar sin internet." -f $filas.Count) "Green"
+        Agregar-Resultado -Prueba "Base de fabricantes MAC" -Destino "IEEE" -Estado ("OK ({0} entradas)" -f $filas.Count)
+    } catch {
+        Log "No se pudo descargar la lista. Puede ser un problema de internet o que la pagina este bloqueada por un firewall/proxy corporativo." "Red"
+        Agregar-Resultado -Prueba "Base de fabricantes MAC" -Destino "IEEE" -Estado "FALLA"
+    }
+}
+
 function Escanear-Red {
     Titulo "DISPOSITIVOS EN LA RED" "Pinguea toda la red local y arma la lista de equipos conectados (PCs, impresoras, routers, etc) usando la tabla ARP. Tarda entre 20 y 40 segundos."
     Log "Cuando usar esto: para saber cuantos y cuales equipos estan conectados a la red local, ver si hay algo desconocido, o encontrar la IP de una impresora." "DarkGray"
+    Log "Tip: ademas de IP, MAC y nombre, esta opcion muestra el fabricante de cada equipo (HP, Epson, Zebra, Cisco, etc). Si es la primera vez que la usas, corre antes la opcion 'Actualizar base de fabricantes (MAC)' para que se pueda mostrar (una sola vez, necesita internet)." "DarkGray"
     Log ""
     $continuar = Read-Host "Deseas ejecutar esto? (s/n)"
     if ($continuar -ne "s") { Log "Cancelado." "DarkYellow"; return }
@@ -767,6 +827,8 @@ function Escanear-Red {
         return
     }
 
+    $tablaFabricantes = Cargar-FabricantesMac
+
     $dispositivos = @()
     foreach ($v in $vecinos) {
         $nombre = "-"
@@ -775,20 +837,25 @@ function Escanear-Red {
             if ($dns) { $nombre = ($dns | Select-Object -First 1).NameHost }
         } catch {}
         if ($v.IPAddress -eq $ipLocal) { $nombre = "$nombre (ESTA PC)" }
-        $dispositivos += [pscustomobject]@{ IP = $v.IPAddress; MAC = $v.LinkLayerAddress; Nombre = $nombre }
+        $fabricante = Buscar-Fabricante -Tabla $tablaFabricantes -Mac $v.LinkLayerAddress
+        if ([string]::IsNullOrWhiteSpace($fabricante)) { $fabricante = "-" }
+        $dispositivos += [pscustomobject]@{ IP = $v.IPAddress; MAC = $v.LinkLayerAddress; Fabricante = $fabricante; Nombre = $nombre }
     }
     $dispositivos = $dispositivos | Sort-Object { [int]($_.IP.Split('.')[3]) }
 
     Log ("Se encontraron {0} dispositivos conectados:" -f $dispositivos.Count) "Cyan"
     Log ""
-    Log ("  {0,-15}  {1,-17}  {2}" -f "IP", "MAC", "Nombre")
-    Log ("  " + ("-" * 55))
+    Log ("  {0,-15}  {1,-17}  {2,-28}  {3}" -f "IP", "MAC", "Fabricante", "Nombre")
+    Log ("  " + ("-" * 85))
     foreach ($d in $dispositivos) {
-        Log ("  {0,-15}  {1,-17}  {2}" -f $d.IP, $d.MAC, $d.Nombre)
+        Log ("  {0,-15}  {1,-17}  {2,-28}  {3}" -f $d.IP, $d.MAC, $d.Fabricante, $d.Nombre)
     }
 
     Log ""
     Log "Nota: el nombre no siempre se puede resolver (depende del dispositivo). Impresoras y equipos de red suelen aparecer solo con IP y MAC." "DarkGray"
+    if (-not $tablaFabricantes) {
+        Log "No se pudo mostrar el fabricante porque todavia no se descargo esa base de datos. Usa la opcion 'Actualizar base de fabricantes (MAC)' del menu para poder verlo (una sola vez, necesita internet)." "DarkYellow"
+    }
     Agregar-Resultado -Prueba "Escaneo de red" -Destino ($base + "0/24") -Estado ("OK ({0} dispositivos)" -f $dispositivos.Count)
 }
 
@@ -949,6 +1016,7 @@ function Mostrar-MenuRed {
     Write-Host " 11. Calidad de la conexion WiFi (intensidad, canal)"
     Write-Host " 12. Historial de desconexiones de WiFi (Visor de Eventos)"
     Write-Host " 13. Chequear IP duplicada en la red"
+    Write-Host " 14. Actualizar base de fabricantes (MAC) - HP, Epson, Zebra, Cisco, etc"
     Write-Host " 0. Volver al menu principal"
     Write-Host "============================================================"
     Write-Host ""
@@ -973,6 +1041,7 @@ function Start-MenuRed {
             "11" { Ver-CalidadWifi }
             "12" { Ver-HistorialDesconexionesWifi }
             "13" { Chequear-IpDuplicada }
+            "14" { Actualizar-BaseFabricantesMac }
             "0" { }
             default { Write-Host "Opcion invalida" -ForegroundColor Red }
         }
