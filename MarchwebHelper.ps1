@@ -1106,25 +1106,37 @@ function Ver-SaludDisco {
 }
 
 function Ejecutar-Chkdsk {
-    Titulo "CHKDSK /F /R - Revisar y reparar el disco" "Busca y repara sectores/errores del sistema de archivos. Puede tardar mucho tiempo (horas en discos grandes)."
-    Log "/F  = repara errores encontrados." "DarkGray"
-    Log "/R  = ademas localiza sectores con fallas e intenta recuperar la informacion (implica /F, es mas lento)." "DarkGray"
+    Titulo "CHKDSK - Revisar y reparar el disco" "Busca y repara errores del sistema de archivos, y opcionalmente localiza sectores con fallas fisicas."
+    Log "/F  = repara errores logicos del sistema de archivos. Rapido (minutos)." "DarkGray"
+    Log "/R  = ademas localiza sectores con fallas fisicas e intenta recuperar la informacion (implica /F). Mucho mas lento (puede tardar horas en discos grandes)." "DarkGray"
     Log ""
-    Log "Cuando usar esto: Windows avisa que hay que reparar el disco, aparecen errores de lectura/escritura, archivos que se corrompen sin razon, o arranques con pantallas de chequeo de disco." "DarkGray"
+    Log "Cuando usar esto: Windows avisa que hay que reparar el disco, aparecen errores de lectura/escritura, archivos que se corrompen sin razon, arranques con pantallas de chequeo de disco, o fallo una copia/clonado del disco." "DarkGray"
     Log ""
-    $unidad = Read-Host "Que unidad queres revisar? (ej: C) [Enter = C]"
+    $unidad = Read-Host "Que unidad queres revisar? (ej: C, D, F) [Enter = C]"
     if ([string]::IsNullOrWhiteSpace($unidad)) { $unidad = "C" }
     $unidad = ($unidad.Trim().TrimEnd(':')) + ":"
 
     Log ""
-    Log ("Se va a ejecutar: chkdsk {0} /f /r" -f $unidad) "Yellow"
+    Write-Host "Que tipo de revision queres hacer?"
+    Write-Host "  1. Solo /F  - repara errores logicos (rapido, minutos)"
+    Write-Host "  2. /F y /R  - ademas busca sectores con fallas fisicas (lento, puede tardar horas)"
+    $opcionChk = Read-Host "Opcion [Enter = 1]"
+    if ([string]::IsNullOrWhiteSpace($opcionChk)) { $opcionChk = "1" }
+    $usarR = ($opcionChk -eq "2")
+
+    Log ""
+    Log ("Se va a ejecutar: chkdsk {0} {1}" -f $unidad, $(if ($usarR) { "/f /r" } else { "/f" })) "Yellow"
     Log "Si es la unidad donde esta instalado Windows, no se puede revisar mientras esta en uso: Windows va a ofrecer programarlo para el proximo reinicio." "Yellow"
     $confirmar = Read-Host "Confirmar? (s/n)"
     if ($confirmar -ne "s") { Log "Cancelado." "DarkYellow"; return }
 
     Log ""
     Log "Arrancando... si no ves nada por un rato es normal, no se colgo, sigue trabajando." "DarkGray"
-    "S`nY`n" | chkdsk $unidad /f /r | ForEach-Object { Log $_ }
+    if ($usarR) {
+        "S`nY`n" | chkdsk $unidad /f /r | ForEach-Object { Log $_ }
+    } else {
+        "S`nY`n" | chkdsk $unidad /f | ForEach-Object { Log $_ }
+    }
     Log ""
     Log "Si aparecio el mensaje de programar la revision, hay que REINICIAR la PC para que se ejecute antes de arrancar Windows." "Cyan"
 }
