@@ -569,7 +569,7 @@ function Test-MonitoreoDual {
     param([string]$Gateway, [string]$Internet)
     Log ""
     Log ("--- Monitoreo continuo: Router ({0}) e Internet ({1}) ---" -f $Gateway, $Internet) "Yellow"
-    Log "Pinguea a los dos al mismo tiempo, 1 vez por segundo. Si se corta el router, el problema es el WIFI/red local. Si el router responde pero Internet no, el problema es del proveedor." "DarkGray"
+    Log "Pinguea a los dos al mismo tiempo, 1 vez por segundo. Si se corta el router, el problema es la red local (wifi o cable). Si el router responde pero Internet no, el problema es del proveedor." "DarkGray"
     Log "Muestra un aviso cada 10 segundos para confirmar que sigue activo. Dejalo corriendo el tiempo que haga falta y presiona Q (o Ctrl+C) para detenerlo y ver el resumen." "DarkGray"
     Log ""
 
@@ -601,7 +601,7 @@ function Test-MonitoreoDual {
             $okNet = [bool](($rNet -join "`n") -match "Respuesta desde|Reply from")
             $enviados++
 
-            $tipoActual = if (-not $okGw) { "LOCAL (Wifi/Router)" } elseif (-not $okNet) { "INTERNET (Proveedor)" } else { $null }
+            $tipoActual = if (-not $okGw) { "LOCAL (Wifi/Cable/Router)" } elseif (-not $okNet) { "INTERNET (Proveedor)" } else { $null }
 
             if (-not $huboMedicion) {
                 if ($tipoActual) {
@@ -664,7 +664,7 @@ function Test-MonitoreoDual {
     Log "--- Resumen del monitoreo ---" "Yellow"
     Log ("Router/Gateway: {0}   Internet: {1}" -f $Gateway, $Internet)
     Log ("Mediciones realizadas: {0}" -f $enviados)
-    Log ("Cortes de WIFI/Router (local): {0}" -f $cortesLocal.Count)
+    Log ("Cortes de la red local (Wifi/Cable/Router): {0}" -f $cortesLocal.Count)
     Log ("Cortes de Internet (con el router funcionando): {0}" -f $cortesInternet.Count)
 
     Mostrar-CronologiaCortes -Cortes $cortes -Inicio $inicio -Fin $fin
@@ -673,9 +673,9 @@ function Test-MonitoreoDual {
     if ($cortesLocal.Count -eq 0 -and $cortesInternet.Count -eq 0) {
         Log "VEREDICTO: No hubo cortes. Router e Internet funcionaron bien todo el tiempo." "Green"
     } elseif ($cortesLocal.Count -gt 0 -and $cortesInternet.Count -eq 0) {
-        Log "VEREDICTO: Los cortes son del WIFI/router local. Revisar el router o el cableado, no es el proveedor." "Yellow"
+        Log "VEREDICTO: Los cortes son de la red local (wifi o cable). Revisar el router, el cable o el wifi, no es el proveedor." "Yellow"
     } elseif ($cortesLocal.Count -eq 0 -and $cortesInternet.Count -gt 0) {
-        Log "VEREDICTO: El router/wifi local funciono bien, pero se corta la salida a Internet. Es el PROVEEDOR." "Red"
+        Log "VEREDICTO: La red local (wifi/cable) funciono bien, pero se corta la salida a Internet. Es el PROVEEDOR." "Red"
     } else {
         Log "VEREDICTO: Hubo cortes de los dos tipos, revisar el detalle arriba." "Yellow"
     }
@@ -685,14 +685,14 @@ function Test-MonitoreoDual {
 }
 
 function Menu-MonitoreoIntermitencias {
-    Titulo "MONITOREO CONTINUO - DETECTAR CORTES INTERMITENTES" "Sirve para cuando dicen que el Wifi o Internet 'va y viene': lo dejas corriendo y anota cada corte con hora y duracion."
-    Log "Cuando usar esto: cuando dicen 'el wifi/internet va y viene' pero ahora mismo anda bien, y necesitas dejarlo corriendo un rato para agarrar el momento exacto del corte." "DarkGray"
+    Titulo "MONITOREO CONTINUO - DETECTAR CORTES INTERMITENTES" "Sirve para cuando dicen que la red (wifi o cable) o Internet 'va y viene': lo dejas corriendo y anota cada corte con hora y duracion."
+    Log "Cuando usar esto: cuando dicen 'la red (wifi o cable) o internet va y viene' pero ahora mismo anda bien, y necesitas dejarlo corriendo un rato para agarrar el momento exacto del corte." "DarkGray"
     Log ""
     $continuar = Read-Host "Deseas ejecutar esto? (s/n)"
     if ($continuar -ne "s") { Log "Cancelado." "DarkYellow"; return }
 
     Write-Host "A que queres monitorear?"
-    Write-Host "  1. Router + Internet al mismo tiempo (RECOMENDADO: dice si es el WIFI o el proveedor)"
+    Write-Host "  1. Router + Internet al mismo tiempo (RECOMENDADO: dice si es la red local -wifi o cable- o el proveedor)"
     Write-Host "  2. Solo Internet (8.8.8.8)"
     Write-Host "  3. Solo Router / Gateway"
     Write-Host "  4. IP o host personalizado"
@@ -1062,7 +1062,7 @@ function Mostrar-MenuRed {
     Write-Host " 3. CHEQUEO RAPIDO: esta caido Internet?"
     Write-Host " 4. Test de Velocidad: esta lento Internet?"
     Write-Host " 5. Test de Acceso Remoto (RDP)"
-    Write-Host " 6. Monitoreo continuo (Wifi/Internet que va y viene, estilo ping -t)"
+    Write-Host " 6. Monitoreo continuo (Wifi/Cable/Internet que va y viene, estilo ping -t)"
     Write-Host " 7. Averiguar el proveedor de Internet (ISP) actual"
     Write-Host " 8. Ver dispositivos conectados a la red (PCs, impresoras, etc)"
     Write-Host " 9. Test personalizado (ping/puerto)"
