@@ -700,22 +700,22 @@ function Menu-MonitoreoIntermitencias {
     switch ($op) {
         "1" {
             $gw = Detectar-Gateway
-            if ([string]::IsNullOrWhiteSpace($gw)) {
+            if (-not $gw -or [string]::IsNullOrWhiteSpace($gw.Gateway)) {
                 Log "No se pudo detectar el gateway automaticamente." "Red"
                 return
             }
-            Log ("Gateway detectado: {0}" -f $gw) "Cyan"
-            Test-MonitoreoDual -Gateway $gw -Internet "8.8.8.8"
+            Log ("Gateway detectado: {0} ({1}, {2})" -f $gw.Gateway, $gw.Nombre, $gw.Tipo) "Cyan"
+            Test-MonitoreoDual -Gateway $gw.Gateway -Internet "8.8.8.8"
         }
         "2" { Test-MonitoreoIntermitencias -Destino "8.8.8.8" }
         "3" {
             $gw = Detectar-Gateway
-            if ([string]::IsNullOrWhiteSpace($gw)) {
+            if (-not $gw -or [string]::IsNullOrWhiteSpace($gw.Gateway)) {
                 Log "No se pudo detectar el gateway automaticamente." "Red"
                 return
             }
-            Log ("Gateway detectado: {0}" -f $gw) "Cyan"
-            Test-MonitoreoIntermitencias -Destino $gw
+            Log ("Gateway detectado: {0} ({1}, {2})" -f $gw.Gateway, $gw.Nombre, $gw.Tipo) "Cyan"
+            Test-MonitoreoIntermitencias -Destino $gw.Gateway
         }
         "4" {
             $destino = Read-Host "IP o host a monitorear"
