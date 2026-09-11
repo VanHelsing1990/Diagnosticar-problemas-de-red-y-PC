@@ -313,7 +313,7 @@ function Test-PingContinuo {
     param([string]$Destino)
     Log ""
     Log ("--- Ping continuo a {0} (estilo ping -t) ---" -f $Destino) "Yellow"
-    Log "Se va a quedar pingueando hasta que lo frenes. Presiona la tecla Q para detenerlo y ver el resumen con los cortes detectados." "DarkGray"
+    Log "Se va a quedar pingueando hasta que lo frenes. Presiona la tecla Q (o Ctrl+C) para detenerlo y ver el resumen con los cortes detectados." "DarkGray"
     $enviados = 0
     $recibidos = 0
     $inicio = Get-Date
@@ -321,29 +321,39 @@ function Test-PingContinuo {
     $inicioCorteActual = $null
     $cortes = @()
 
-    while ($true) {
-        if ([Console]::KeyAvailable) {
-            $tecla = [Console]::ReadKey($true)
-            if ($tecla.Key -eq 'Q') { break }
-        }
-        $ahora = Get-Date
-        $r = ping $Destino -n 1
-        $enviados++
-        $ok = [bool](($r -join "`n") -match "Respuesta desde|Reply from")
-        if ($ok) { $recibidos++ }
-        $marca = if ($ok) { "OK" } else { "PERDIDO" }
-        $color = if ($ok) { "Green" } else { "Red" }
-        Write-Host ("[{0}] Intento {1}: {2}" -f $ahora.ToString("HH:mm:ss"), $enviados, $marca) -ForegroundColor $color
+    $ctrlCOriginal = $false
+    try {
+        $ctrlCOriginal = [Console]::TreatControlCAsInput
+        [Console]::TreatControlCAsInput = $true
+    } catch {}
+    try {
+        while ($true) {
+            if ([Console]::KeyAvailable) {
+                $tecla = [Console]::ReadKey($true)
+                $esCtrlC = ($tecla.Key -eq 'C' -and ($tecla.Modifiers -band [ConsoleModifiers]::Control))
+                if ($tecla.Key -eq 'Q' -or $esCtrlC) { break }
+            }
+            $ahora = Get-Date
+            $r = ping $Destino -n 1
+            $enviados++
+            $ok = [bool](($r -join "`n") -match "Respuesta desde|Reply from")
+            if ($ok) { $recibidos++ }
+            $marca = if ($ok) { "OK" } else { "PERDIDO" }
+            $color = if ($ok) { "Green" } else { "Red" }
+            Write-Host ("[{0}] Intento {1}: {2}" -f $ahora.ToString("HH:mm:ss"), $enviados, $marca) -ForegroundColor $color
 
-        if ($null -eq $estadoAnterior) {
-            if (-not $ok) { $inicioCorteActual = $ahora }
-        } elseif ($ok -and -not $estadoAnterior) {
-            $duracion = [math]::Round(($ahora - $inicioCorteActual).TotalSeconds, 1)
-            $cortes += [pscustomobject]@{ Inicio = $inicioCorteActual; Fin = $ahora; DuracionSeg = $duracion }
-        } elseif (-not $ok -and $estadoAnterior) {
-            $inicioCorteActual = $ahora
+            if ($null -eq $estadoAnterior) {
+                if (-not $ok) { $inicioCorteActual = $ahora }
+            } elseif ($ok -and -not $estadoAnterior) {
+                $duracion = [math]::Round(($ahora - $inicioCorteActual).TotalSeconds, 1)
+                $cortes += [pscustomobject]@{ Inicio = $inicioCorteActual; Fin = $ahora; DuracionSeg = $duracion }
+            } elseif (-not $ok -and $estadoAnterior) {
+                $inicioCorteActual = $ahora
+            }
+            $estadoAnterior = $ok
         }
-        $estadoAnterior = $ok
+    } finally {
+        try { [Console]::TreatControlCAsInput = $ctrlCOriginal } catch {}
     }
 
     $fin = Get-Date
@@ -440,8 +450,8 @@ function Test-MonitoreoIntermitencias {
     param([string]$Destino)
     Log ""
     Log ("--- Monitoreo continuo a {0} (estilo ping -t) ---" -f $Destino) "Yellow"
-    Log "Pinguea 1 vez por segundo sin parar. No muestra cada intento: solo avisa cuando se corta y cuando vuelve, con la hora y cuanto duro el corte." "DarkGray"
-    Log "Dejalo corriendo el tiempo que haga falta (minutos u horas) y presiona Q para detenerlo y ver el resumen." "DarkGray"
+    Log "Pinguea 1 vez por segundo sin parar. Muestra un aviso cada 10 segundos para confirmar que sigue activo, y avisa apenas se corta o vuelve, con la hora y cuanto duro el corte." "DarkGray"
+    Log "Dejalo corriendo el tiempo que haga falta (minutos u horas) y presiona Q (o Ctrl+C) para detenerlo y ver el resumen." "DarkGray"
     Log ""
 
     $enviados = 0
@@ -450,36 +460,57 @@ function Test-MonitoreoIntermitencias {
     $estadoAnterior = $null
     $inicioCorteActual = $null
     $cortes = @()
+    $ultimoAviso = Get-Date
 
-    while ($true) {
-        if ([Console]::KeyAvailable) {
-            $tecla = [Console]::ReadKey($true)
-            if ($tecla.Key -eq 'Q') { break }
-        }
-        $ahora = Get-Date
-        $r = ping $Destino -n 1 -w 1000
-        $enviados++
-        $ok = [bool](($r -join "`n") -match "Respuesta desde|Reply from")
-        if ($ok) { $recibidos++ }
-
-        if ($null -eq $estadoAnterior) {
-            if ($ok) {
-                Write-Host ("[{0}] Arranca ARRIBA" -f $ahora.ToString("HH:mm:ss")) -ForegroundColor Green
-            } else {
-                Write-Host ("[{0}] Arranca CAIDO" -f $ahora.ToString("HH:mm:ss")) -ForegroundColor Red
-                $inicioCorteActual = $ahora
+    $ctrlCOriginal = $false
+    try {
+        $ctrlCOriginal = [Console]::TreatControlCAsInput
+        [Console]::TreatControlCAsInput = $true
+    } catch {}
+    try {
+        while ($true) {
+            if ([Console]::KeyAvailable) {
+                $tecla = [Console]::ReadKey($true)
+                $esCtrlC = ($tecla.Key -eq 'C' -and ($tecla.Modifiers -band [ConsoleModifiers]::Control))
+                if ($tecla.Key -eq 'Q' -or $esCtrlC) { break }
             }
-        } elseif ($ok -and -not $estadoAnterior) {
-            $duracion = [math]::Round(($ahora - $inicioCorteActual).TotalSeconds, 1)
-            $cortes += [pscustomobject]@{ Inicio = $inicioCorteActual; Fin = $ahora; DuracionSeg = $duracion }
-            Write-Host ("[{0}] SE RECUPERO -> estuvo caido {1} segundos (desde las {2})" -f $ahora.ToString("HH:mm:ss"), $duracion, $inicioCorteActual.ToString("HH:mm:ss")) -ForegroundColor Green
-        } elseif (-not $ok -and $estadoAnterior) {
-            $inicioCorteActual = $ahora
-            Write-Host ("[{0}] SE CORTO" -f $ahora.ToString("HH:mm:ss")) -ForegroundColor Red
-        }
+            $ahora = Get-Date
+            $r = ping $Destino -n 1 -w 1000
+            $enviados++
+            $ok = [bool](($r -join "`n") -match "Respuesta desde|Reply from")
+            if ($ok) { $recibidos++ }
 
-        $estadoAnterior = $ok
-        Start-Sleep -Milliseconds 1000
+            if ($null -eq $estadoAnterior) {
+                if ($ok) {
+                    Write-Host ("[{0}] Arranca ACTIVO - con conexion" -f $ahora.ToString("HH:mm:ss")) -ForegroundColor Green
+                } else {
+                    Write-Host ("[{0}] Arranca CAIDO - sin conexion" -f $ahora.ToString("HH:mm:ss")) -ForegroundColor Red
+                    $inicioCorteActual = $ahora
+                }
+                $ultimoAviso = $ahora
+            } elseif ($ok -and -not $estadoAnterior) {
+                $duracion = [math]::Round(($ahora - $inicioCorteActual).TotalSeconds, 1)
+                $cortes += [pscustomobject]@{ Inicio = $inicioCorteActual; Fin = $ahora; DuracionSeg = $duracion }
+                Write-Host ("[{0}] VOLVIO LA CONEXION -> estuvo caido {1} segundos (desde las {2})" -f $ahora.ToString("HH:mm:ss"), $duracion, $inicioCorteActual.ToString("HH:mm:ss")) -ForegroundColor Green
+                $ultimoAviso = $ahora
+            } elseif (-not $ok -and $estadoAnterior) {
+                $inicioCorteActual = $ahora
+                Write-Host ("[{0}] SE CORTO - sin conexion" -f $ahora.ToString("HH:mm:ss")) -ForegroundColor Red
+                $ultimoAviso = $ahora
+            } elseif (($ahora - $ultimoAviso).TotalSeconds -ge 10) {
+                if ($ok) {
+                    Write-Host ("[{0}] Sigue activo, con conexion (sin cortes por ahora)" -f $ahora.ToString("HH:mm:ss")) -ForegroundColor DarkGray
+                } else {
+                    Write-Host ("[{0}] Sigue caido, sin conexion" -f $ahora.ToString("HH:mm:ss")) -ForegroundColor DarkGray
+                }
+                $ultimoAviso = $ahora
+            }
+
+            $estadoAnterior = $ok
+            Start-Sleep -Milliseconds 1000
+        }
+    } finally {
+        try { [Console]::TreatControlCAsInput = $ctrlCOriginal } catch {}
     }
 
     $fin = Get-Date
@@ -539,7 +570,7 @@ function Test-MonitoreoDual {
     Log ""
     Log ("--- Monitoreo continuo: Router ({0}) e Internet ({1}) ---" -f $Gateway, $Internet) "Yellow"
     Log "Pinguea a los dos al mismo tiempo, 1 vez por segundo. Si se corta el router, el problema es el WIFI/red local. Si el router responde pero Internet no, el problema es del proveedor." "DarkGray"
-    Log "Dejalo corriendo el tiempo que haga falta y presiona Q para detenerlo y ver el resumen." "DarkGray"
+    Log "Muestra un aviso cada 10 segundos para confirmar que sigue activo. Dejalo corriendo el tiempo que haga falta y presiona Q (o Ctrl+C) para detenerlo y ver el resumen." "DarkGray"
     Log ""
 
     $enviados = 0
@@ -549,51 +580,74 @@ function Test-MonitoreoDual {
     $inicioCorteActual = $null
     $tipoCorteActual = $null
     $cortes = @()
+    $ultimoAviso = Get-Date
 
-    while ($true) {
-        if ([Console]::KeyAvailable) {
-            $tecla = [Console]::ReadKey($true)
-            if ($tecla.Key -eq 'Q') { break }
-        }
-        $ahora = Get-Date
-        $rGw = ping $Gateway -n 1 -w 1000
-        $okGw = [bool](($rGw -join "`n") -match "Respuesta desde|Reply from")
-        $rNet = ping $Internet -n 1 -w 1000
-        $okNet = [bool](($rNet -join "`n") -match "Respuesta desde|Reply from")
-        $enviados++
+    $ctrlCOriginal = $false
+    try {
+        $ctrlCOriginal = [Console]::TreatControlCAsInput
+        [Console]::TreatControlCAsInput = $true
+    } catch {}
+    try {
+        while ($true) {
+            if ([Console]::KeyAvailable) {
+                $tecla = [Console]::ReadKey($true)
+                $esCtrlC = ($tecla.Key -eq 'C' -and ($tecla.Modifiers -band [ConsoleModifiers]::Control))
+                if ($tecla.Key -eq 'Q' -or $esCtrlC) { break }
+            }
+            $ahora = Get-Date
+            $rGw = ping $Gateway -n 1 -w 1000
+            $okGw = [bool](($rGw -join "`n") -match "Respuesta desde|Reply from")
+            $rNet = ping $Internet -n 1 -w 1000
+            $okNet = [bool](($rNet -join "`n") -match "Respuesta desde|Reply from")
+            $enviados++
 
-        $tipoActual = if (-not $okGw) { "LOCAL (Wifi/Router)" } elseif (-not $okNet) { "INTERNET (Proveedor)" } else { $null }
+            $tipoActual = if (-not $okGw) { "LOCAL (Wifi/Router)" } elseif (-not $okNet) { "INTERNET (Proveedor)" } else { $null }
 
-        if (-not $huboMedicion) {
-            if ($tipoActual) {
-                Write-Host ("[{0}] Arranca CAIDO - {1}" -f $ahora.ToString("HH:mm:ss"), $tipoActual) -ForegroundColor Red
+            if (-not $huboMedicion) {
+                if ($tipoActual) {
+                    Write-Host ("[{0}] Arranca CAIDO - {1}" -f $ahora.ToString("HH:mm:ss"), $tipoActual) -ForegroundColor Red
+                    $inicioCorteActual = $ahora
+                    $tipoCorteActual = $tipoActual
+                } else {
+                    Write-Host ("[{0}] Arranca ARRIBA (router e internet OK)" -f $ahora.ToString("HH:mm:ss")) -ForegroundColor Green
+                }
+                $huboMedicion = $true
+                $ultimoAviso = $ahora
+            }
+            elseif ($tipoActual -and -not $tipoAnterior) {
                 $inicioCorteActual = $ahora
                 $tipoCorteActual = $tipoActual
-            } else {
-                Write-Host ("[{0}] Arranca ARRIBA (router e internet OK)" -f $ahora.ToString("HH:mm:ss")) -ForegroundColor Green
+                Write-Host ("[{0}] SE CORTO - {1}" -f $ahora.ToString("HH:mm:ss"), $tipoActual) -ForegroundColor Red
+                $ultimoAviso = $ahora
             }
-            $huboMedicion = $true
-        }
-        elseif ($tipoActual -and -not $tipoAnterior) {
-            $inicioCorteActual = $ahora
-            $tipoCorteActual = $tipoActual
-            Write-Host ("[{0}] SE CORTO - {1}" -f $ahora.ToString("HH:mm:ss"), $tipoActual) -ForegroundColor Red
-        }
-        elseif (-not $tipoActual -and $tipoAnterior) {
-            $duracion = [math]::Round(($ahora - $inicioCorteActual).TotalSeconds, 1)
-            $cortes += [pscustomobject]@{ Inicio = $inicioCorteActual; Fin = $ahora; DuracionSeg = $duracion; Tipo = $tipoCorteActual }
-            Write-Host ("[{0}] SE RECUPERO -> estuvo caido {1} segundos ({2}, desde las {3})" -f $ahora.ToString("HH:mm:ss"), $duracion, $tipoCorteActual, $inicioCorteActual.ToString("HH:mm:ss")) -ForegroundColor Green
-        }
-        elseif ($tipoActual -and $tipoAnterior -and $tipoActual -ne $tipoAnterior) {
-            $duracion = [math]::Round(($ahora - $inicioCorteActual).TotalSeconds, 1)
-            $cortes += [pscustomobject]@{ Inicio = $inicioCorteActual; Fin = $ahora; DuracionSeg = $duracion; Tipo = $tipoCorteActual }
-            Write-Host ("[{0}] Cambia el tipo de corte: ahora es {1}" -f $ahora.ToString("HH:mm:ss"), $tipoActual) -ForegroundColor Red
-            $inicioCorteActual = $ahora
-            $tipoCorteActual = $tipoActual
-        }
+            elseif (-not $tipoActual -and $tipoAnterior) {
+                $duracion = [math]::Round(($ahora - $inicioCorteActual).TotalSeconds, 1)
+                $cortes += [pscustomobject]@{ Inicio = $inicioCorteActual; Fin = $ahora; DuracionSeg = $duracion; Tipo = $tipoCorteActual }
+                Write-Host ("[{0}] SE RECUPERO -> estuvo caido {1} segundos ({2}, desde las {3})" -f $ahora.ToString("HH:mm:ss"), $duracion, $tipoCorteActual, $inicioCorteActual.ToString("HH:mm:ss")) -ForegroundColor Green
+                $ultimoAviso = $ahora
+            }
+            elseif ($tipoActual -and $tipoAnterior -and $tipoActual -ne $tipoAnterior) {
+                $duracion = [math]::Round(($ahora - $inicioCorteActual).TotalSeconds, 1)
+                $cortes += [pscustomobject]@{ Inicio = $inicioCorteActual; Fin = $ahora; DuracionSeg = $duracion; Tipo = $tipoCorteActual }
+                Write-Host ("[{0}] Cambia el tipo de corte: ahora es {1}" -f $ahora.ToString("HH:mm:ss"), $tipoActual) -ForegroundColor Red
+                $inicioCorteActual = $ahora
+                $tipoCorteActual = $tipoActual
+                $ultimoAviso = $ahora
+            }
+            elseif (($ahora - $ultimoAviso).TotalSeconds -ge 10) {
+                if ($tipoActual) {
+                    Write-Host ("[{0}] Sigue caido - {1}" -f $ahora.ToString("HH:mm:ss"), $tipoActual) -ForegroundColor DarkGray
+                } else {
+                    Write-Host ("[{0}] Sigue activo, router e internet OK" -f $ahora.ToString("HH:mm:ss")) -ForegroundColor DarkGray
+                }
+                $ultimoAviso = $ahora
+            }
 
-        $tipoAnterior = $tipoActual
-        Start-Sleep -Milliseconds 1000
+            $tipoAnterior = $tipoActual
+            Start-Sleep -Milliseconds 1000
+        }
+    } finally {
+        try { [Console]::TreatControlCAsInput = $ctrlCOriginal } catch {}
     }
 
     $fin = Get-Date
