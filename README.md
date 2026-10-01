@@ -18,6 +18,8 @@ Donada por [marchweb.com.ar](https://marchweb.com.ar) para uso libre de la comun
 - Calidad de la conexión WiFi (intensidad, canal)
 - Historial de desconexiones de WiFi
 - Chequear IP duplicada en la red
+- Omitir verificación de identidad remota (RDP), para no ver el cartel de advertencia al conectarte por IP a equipos de tu propia red
+- Actualizar horario de la PC contra un servidor de hora público
 - Test personalizado: ping, ping continuo, tracert, puertos
 
 ### 💻 Mantenimiento de PC

@@ -1051,6 +1051,55 @@ function Chequear-IpDuplicada {
     Agregar-Resultado -Prueba "IP duplicada" -Destino $ipLocal -Estado "OK"
 }
 
+function Omitir-VerificacionRemotoRDP {
+    Titulo "OMITIR VERIFICACION DE IDENTIDAD REMOTA (RDP)" "Evita el cartel 'No se puede verificar la identidad del equipo remoto' al conectarse por Escritorio Remoto a equipos cuyo certificado no coincide con el nombre/IP usado."
+    Log "Cuando usar esto: cuando te conectas seguido por RDP a equipos de tu propia red (por IP) y ese cartel de advertencia interrumpe cada vez la conexion." "DarkGray"
+    Log "Nota: esto baja un poco la verificacion de identidad en las conexiones RDP salientes de esta PC. Usalo solo si confias en los equipos a los que te conectas." "Yellow"
+    Log "Necesita permisos de Administrador (modifica el Registro de Windows)." "Yellow"
+    Log ""
+    $continuar = Read-Host "Deseas ejecutar esto? (s/n)"
+    if ($continuar -ne "s") { Log "Cancelado." "DarkYellow"; return }
+
+    $path = "HKLM:\Software\Policies\Microsoft\Windows NT\Terminal Services\Client"
+    $name = "RedirectionWarningDialogVersion"
+    try {
+        if (-not (Test-Path $path)) {
+            New-Item -Path $path -Force -ErrorAction Stop | Out-Null
+        }
+        New-ItemProperty -Path $path -Name $name -Value 1 -PropertyType DWORD -Force -ErrorAction Stop | Out-Null
+        Log "Listo: ya no deberia aparecer el cartel de verificacion de identidad al conectarte por RDP desde esta PC." "Green"
+        Agregar-Resultado -Prueba "Omitir verificacion RDP" -Destino $env:COMPUTERNAME -Estado "OK"
+    } catch {
+        Log "No se pudo aplicar el cambio. Probablemente falten permisos de Administrador: cerra el programa y abrilo de nuevo aceptando el pedido de Administrador." "Red"
+        Agregar-Resultado -Prueba "Omitir verificacion RDP" -Destino $env:COMPUTERNAME -Estado "FALLA (sin permisos?)"
+    }
+}
+
+function Actualizar-HorarioPC {
+    Titulo "ACTUALIZAR HORARIO DE LA PC" "Configura el servicio de hora de Windows contra un servidor de hora publico (hora.uv.es) y fuerza una sincronizacion inmediata."
+    Log "Cuando usar esto: cuando el reloj de la PC esta atrasado o adelantado y eso causa problemas (errores de certificados en paginas/RDP, fallas para iniciar sesion en el dominio, programas que fallan por fecha incorrecta)." "DarkGray"
+    Log "Necesita permisos de Administrador (configura el servicio de hora de Windows)." "Yellow"
+    Log ""
+    $continuar = Read-Host "Deseas ejecutar esto? (s/n)"
+    if ($continuar -ne "s") { Log "Cancelado." "DarkYellow"; return }
+
+    Log ""
+    Log "--- Configurando servidor de hora (hora.uv.es) ---" "Yellow"
+    w32tm /config /manualpeerlist:"hora.uv.es,0x1" /syncfromflags:manual /reliable:YES | ForEach-Object { Log $_ }
+
+    Log ""
+    Log "--- Reiniciando el servicio de hora de Windows ---" "Yellow"
+    w32tm /config /update | ForEach-Object { Log $_ }
+
+    Log ""
+    Log "--- Forzando sincronizacion ---" "Yellow"
+    w32tm /resync | ForEach-Object { Log $_ }
+
+    Log ""
+    Log ("Hora actual del sistema: {0}" -f (Get-Date)) "Cyan"
+    Agregar-Resultado -Prueba "Actualizar horario PC" -Destino "hora.uv.es" -Estado "OK"
+}
+
 function Mostrar-MenuRed {
     Clear-Host
     Mostrar-Banner
@@ -1071,6 +1120,8 @@ function Mostrar-MenuRed {
     Write-Host " 12. Historial de desconexiones de WiFi (Visor de Eventos)"
     Write-Host " 13. Chequear IP duplicada en la red"
     Write-Host " 14. Actualizar base de fabricantes (MAC) - HP, Epson, Zebra, Cisco, etc"
+    Write-Host " 15. Omitir verificacion de identidad remota (RDP)"
+    Write-Host " 16. Actualizar horario de la PC"
     Write-Host " 0. Volver al menu principal"
     Write-Host "============================================================"
     Write-Host ""
@@ -1096,6 +1147,8 @@ function Start-MenuRed {
             "12" { Ver-HistorialDesconexionesWifi }
             "13" { Chequear-IpDuplicada }
             "14" { Actualizar-BaseFabricantesMac }
+            "15" { Omitir-VerificacionRemotoRDP }
+            "16" { Actualizar-HorarioPC }
             "0" { }
             default { Write-Host "Opcion invalida" -ForegroundColor Red }
         }
