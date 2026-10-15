@@ -24,10 +24,14 @@ if (-not (Test-Path $CarpetaTesteos)) { New-Item -ItemType Directory -Path $Carp
 
 $ConfigFile = Join-Path $ScriptDir "config.json"
 $Sede = "Mi Empresa"
+$WebMonitorUrl = ""
+$WebMonitorKey = ""
 if (Test-Path $ConfigFile) {
     try {
         $loaded = Get-Content $ConfigFile -Raw | ConvertFrom-Json
         if ($loaded.Sede) { $Sede = $loaded.Sede }
+        if ($loaded.WebMonitorUrl) { $WebMonitorUrl = $loaded.WebMonitorUrl }
+        if ($loaded.WebMonitorKey) { $WebMonitorKey = $loaded.WebMonitorKey }
     } catch {}
 }
 
@@ -386,6 +390,23 @@ function Formatear-Duracion {
     return ("{0}m {1}s" -f [int]$ts.TotalMinutes, $ts.Seconds)
 }
 
+function Enviar-EventoWeb {
+    param([string]$Tipo, [string]$Estado, [string]$Detalle = "")
+    if ([string]::IsNullOrWhiteSpace($WebMonitorUrl)) { return }
+    try {
+        $cuerpo = @{
+            key     = $WebMonitorKey
+            origen  = $env:COMPUTERNAME
+            tipo    = $Tipo
+            estado  = $Estado
+            detalle = $Detalle
+        } | ConvertTo-Json
+        Invoke-RestMethod -Uri $WebMonitorUrl -Method Post -Body $cuerpo -ContentType "application/json; charset=utf-8" -TimeoutSec 5 -ErrorAction Stop | Out-Null
+    } catch {
+        # Si falla el envio (sin internet, panel caido, etc) no interrumpe el monitoreo local.
+    }
+}
+
 function Mostrar-CronologiaCortes {
     param($Cortes, [datetime]$Inicio, [datetime]$Fin)
 
@@ -483,25 +504,31 @@ function Test-MonitoreoIntermitencias {
             if ($null -eq $estadoAnterior) {
                 if ($ok) {
                     Write-Host ("[{0}] Arranca ACTIVO - con conexion" -f $ahora.ToString("HH:mm:ss")) -ForegroundColor Green
+                    Enviar-EventoWeb -Tipo $Destino -Estado "ACTIVO" -Detalle "Arranca el monitoreo"
                 } else {
                     Write-Host ("[{0}] Arranca CAIDO - sin conexion" -f $ahora.ToString("HH:mm:ss")) -ForegroundColor Red
                     $inicioCorteActual = $ahora
+                    Enviar-EventoWeb -Tipo $Destino -Estado "CAIDO" -Detalle "Arranca el monitoreo, ya caido"
                 }
                 $ultimoAviso = $ahora
             } elseif ($ok -and -not $estadoAnterior) {
                 $duracion = [math]::Round(($ahora - $inicioCorteActual).TotalSeconds, 1)
                 $cortes += [pscustomobject]@{ Inicio = $inicioCorteActual; Fin = $ahora; DuracionSeg = $duracion }
                 Write-Host ("[{0}] VOLVIO LA CONEXION -> estuvo caido {1} segundos (desde las {2})" -f $ahora.ToString("HH:mm:ss"), $duracion, $inicioCorteActual.ToString("HH:mm:ss")) -ForegroundColor Green
+                Enviar-EventoWeb -Tipo $Destino -Estado "ACTIVO" -Detalle ("Volvio, estuvo caido {0} segundos" -f $duracion)
                 $ultimoAviso = $ahora
             } elseif (-not $ok -and $estadoAnterior) {
                 $inicioCorteActual = $ahora
                 Write-Host ("[{0}] SE CORTO - sin conexion" -f $ahora.ToString("HH:mm:ss")) -ForegroundColor Red
+                Enviar-EventoWeb -Tipo $Destino -Estado "CAIDO" -Detalle "Se corto ahora"
                 $ultimoAviso = $ahora
             } elseif (($ahora - $ultimoAviso).TotalSeconds -ge 10) {
                 if ($ok) {
                     Write-Host ("[{0}] Sigue activo, con conexion (sin cortes por ahora)" -f $ahora.ToString("HH:mm:ss")) -ForegroundColor DarkGray
+                    Enviar-EventoWeb -Tipo $Destino -Estado "ACTIVO" -Detalle "Sigue activo"
                 } else {
                     Write-Host ("[{0}] Sigue caido, sin conexion" -f $ahora.ToString("HH:mm:ss")) -ForegroundColor DarkGray
+                    Enviar-EventoWeb -Tipo $Destino -Estado "CAIDO" -Detalle "Sigue caido"
                 }
                 $ultimoAviso = $ahora
             }
@@ -608,8 +635,10 @@ function Test-MonitoreoDual {
                     Write-Host ("[{0}] Arranca CAIDO - {1}" -f $ahora.ToString("HH:mm:ss"), $tipoActual) -ForegroundColor Red
                     $inicioCorteActual = $ahora
                     $tipoCorteActual = $tipoActual
+                    Enviar-EventoWeb -Tipo $tipoActual -Estado "CAIDO" -Detalle "Arranca el monitoreo, ya caido"
                 } else {
                     Write-Host ("[{0}] Arranca ARRIBA (router e internet OK)" -f $ahora.ToString("HH:mm:ss")) -ForegroundColor Green
+                    Enviar-EventoWeb -Tipo "RED" -Estado "ACTIVO" -Detalle "Arranca el monitoreo"
                 }
                 $huboMedicion = $true
                 $ultimoAviso = $ahora
@@ -618,12 +647,14 @@ function Test-MonitoreoDual {
                 $inicioCorteActual = $ahora
                 $tipoCorteActual = $tipoActual
                 Write-Host ("[{0}] SE CORTO - {1}" -f $ahora.ToString("HH:mm:ss"), $tipoActual) -ForegroundColor Red
+                Enviar-EventoWeb -Tipo $tipoActual -Estado "CAIDO" -Detalle "Se corto ahora"
                 $ultimoAviso = $ahora
             }
             elseif (-not $tipoActual -and $tipoAnterior) {
                 $duracion = [math]::Round(($ahora - $inicioCorteActual).TotalSeconds, 1)
                 $cortes += [pscustomobject]@{ Inicio = $inicioCorteActual; Fin = $ahora; DuracionSeg = $duracion; Tipo = $tipoCorteActual }
                 Write-Host ("[{0}] SE RECUPERO -> estuvo caido {1} segundos ({2}, desde las {3})" -f $ahora.ToString("HH:mm:ss"), $duracion, $tipoCorteActual, $inicioCorteActual.ToString("HH:mm:ss")) -ForegroundColor Green
+                Enviar-EventoWeb -Tipo "RED" -Estado "ACTIVO" -Detalle ("Volvio ({0}), estuvo caido {1} segundos" -f $tipoCorteActual, $duracion)
                 $ultimoAviso = $ahora
             }
             elseif ($tipoActual -and $tipoAnterior -and $tipoActual -ne $tipoAnterior) {
@@ -632,13 +663,16 @@ function Test-MonitoreoDual {
                 Write-Host ("[{0}] Cambia el tipo de corte: ahora es {1}" -f $ahora.ToString("HH:mm:ss"), $tipoActual) -ForegroundColor Red
                 $inicioCorteActual = $ahora
                 $tipoCorteActual = $tipoActual
+                Enviar-EventoWeb -Tipo $tipoActual -Estado "CAIDO" -Detalle "Cambio el tipo de corte"
                 $ultimoAviso = $ahora
             }
             elseif (($ahora - $ultimoAviso).TotalSeconds -ge 10) {
                 if ($tipoActual) {
                     Write-Host ("[{0}] Sigue caido - {1}" -f $ahora.ToString("HH:mm:ss"), $tipoActual) -ForegroundColor DarkGray
+                    Enviar-EventoWeb -Tipo $tipoActual -Estado "CAIDO" -Detalle "Sigue caido"
                 } else {
                     Write-Host ("[{0}] Sigue activo, router e internet OK" -f $ahora.ToString("HH:mm:ss")) -ForegroundColor DarkGray
+                    Enviar-EventoWeb -Tipo "RED" -Estado "ACTIVO" -Detalle "Sigue activo"
                 }
                 $ultimoAviso = $ahora
             }
