@@ -45,6 +45,37 @@ function Log {
     param([string]$Texto, [string]$Color = "White")
     Write-Host $Texto -ForegroundColor $Color
     $script:BufferActual += $Texto
+    if ($script:ArchivoTesteoActual) {
+        try { Add-Content -Path $script:ArchivoTesteoActual -Value $Texto -Encoding UTF8 } catch {}
+    }
+}
+
+function Iniciar-ArchivoTesteo {
+    param([string]$NombreOpcion)
+    $marcaTiempo = Get-Date -Format "yyyyMMdd_HHmmss"
+    $usuario = $env:USERNAME
+    $nombreArchivo = "{0}_{1}_{2}_{3}.txt" -f $SedeArchivo, $marcaTiempo, $usuario, $NombreOpcion
+    $script:ArchivoTesteoActual = Join-Path $CarpetaTesteos $nombreArchivo
+    try {
+        @(
+            ("Fecha   : {0}" -f (Get-Date -Format "dd/MM/yyyy HH:mm:ss"))
+            ("Usuario : {0}" -f $usuario)
+            ("Equipo  : {0}" -f $env:COMPUTERNAME)
+            ("Prueba  : {0}" -f $NombreOpcion)
+            ("=" * 60)
+            ""
+        ) | Set-Content -Path $script:ArchivoTesteoActual -Encoding UTF8
+    } catch {
+        $script:ArchivoTesteoActual = $null
+    }
+}
+
+function Finalizar-ArchivoTesteo {
+    if ($script:ArchivoTesteoActual) {
+        Write-Host ""
+        Write-Host ("Guardado automaticamente: {0}" -f $script:ArchivoTesteoActual) -ForegroundColor DarkGray
+    }
+    $script:ArchivoTesteoActual = $null
 }
 
 function Titulo {
@@ -1321,6 +1352,27 @@ function Start-MenuRed {
         Mostrar-MenuRed
         $opcionRed = Read-Host "Elegi una opcion"
         Reset-Resultados
+        $nombreOpcionRed = switch ($opcionRed) {
+            "1" { "IpConfigAll" }
+            "2" { "VerAdaptadores" }
+            "3" { "ChequeoInternet" }
+            "4" { "TestVelocidad" }
+            "5" { "TestAccesoRemoto" }
+            "6" { "MonitoreoIntermitencias" }
+            "7" { "InfoProveedorISP" }
+            "8" { "EscaneoRed" }
+            "9" { "TestPersonalizado" }
+            "10" { "ArregloRapidoRed" }
+            "11" { "CalidadWifi" }
+            "12" { "HistorialWifi" }
+            "13" { "IpDuplicada" }
+            "14" { "BaseFabricantesMac" }
+            "15" { "OmitirVerificacionRDP" }
+            "16" { "ActualizarHorario" }
+            "17" { "RepararIpDhcp" }
+            default { $null }
+        }
+        if ($nombreOpcionRed) { Iniciar-ArchivoTesteo $nombreOpcionRed }
         switch ($opcionRed) {
             "1" { Mostrar-IpConfigAll }
             "2" { Menu-VerAdaptadores }
@@ -1343,6 +1395,7 @@ function Start-MenuRed {
             default { Write-Host "Opcion invalida" -ForegroundColor Red }
         }
         Mostrar-Resumen
+        if ($nombreOpcionRed) { Finalizar-ArchivoTesteo }
         if ($opcionRed -ne "0") {
             Write-Host ""
             Read-Host "Presiona ENTER para volver"
@@ -1713,6 +1766,23 @@ function Start-MenuMantenimiento {
     do {
         Mostrar-MenuMantenimiento
         $opcionMant = Read-Host "Elegi una opcion"
+        $nombreOpcionMant = switch ($opcionMant) {
+            "1" { "EspacioDisco" }
+            "2" { "SaludDisco" }
+            "3" { "Chkdsk" }
+            "4" { "SFC" }
+            "5" { "DISM" }
+            "6" { "LiberarEspacio" }
+            "7" { "OptimizarDisco" }
+            "8" { "InfoEquipo" }
+            "9" { "ProcesosTop" }
+            "10" { "ReiniciarSpooler" }
+            "11" { "EstadoAntivirus" }
+            "12" { "ProgramasInicio" }
+            "13" { "ErroresRecientes" }
+            default { $null }
+        }
+        if ($nombreOpcionMant) { Iniciar-ArchivoTesteo $nombreOpcionMant }
         switch ($opcionMant) {
             "1" { Ver-EspacioDisco }
             "2" { Ver-SaludDisco }
@@ -1730,6 +1800,7 @@ function Start-MenuMantenimiento {
             "0" { }
             default { Write-Host "Opcion invalida" -ForegroundColor Red }
         }
+        if ($nombreOpcionMant) { Finalizar-ArchivoTesteo }
         if ($opcionMant -ne "0") {
             Write-Host ""
             Read-Host "Presiona ENTER para volver"
@@ -1818,7 +1889,9 @@ Reset-Buffer
 if ($Mantenimiento) {
     Start-MenuMantenimiento
 } elseif ($RepararDhcp) {
+    Iniciar-ArchivoTesteo "RepararIpDhcp"
     Reparar-IpDhcp
+    Finalizar-ArchivoTesteo
     Write-Host ""
     Read-Host "Presiona ENTER para continuar"
 } else {

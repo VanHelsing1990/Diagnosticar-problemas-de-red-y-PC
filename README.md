@@ -46,7 +46,7 @@ Donada por [marchweb.com.ar](https://marchweb.com.ar) para uso libre de la comun
 1. Descargar la carpeta completa.
 2. Ejecutar `MarchwebHelper.bat` (doble clic).
 3. Elegir un área del menú principal (Testeo de Red o Mantenimiento de PC) y después la opción que se necesite.
-4. Los resultados se pueden guardar en un archivo de texto desde el menú principal, en la carpeta `Testeos`.
+4. Cada prueba que corras se guarda **sola y automáticamente** como un archivo de texto en la carpeta `Testeos` (con fecha, usuario, equipo y el resultado completo), apenas termina — no hace falta guardar nada a mano, y si cerrás la ventana de golpe no se pierde lo que ya se alcanzó a mostrar.
 
 Para personalizar el nombre que aparece en los menús, editar el archivo `config.json`:
 
