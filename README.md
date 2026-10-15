@@ -20,6 +20,7 @@ Donada por [marchweb.com.ar](https://marchweb.com.ar) para uso libre de la comun
 - Chequear IP duplicada en la red
 - Omitir verificación de identidad remota (RDP), para no ver el cartel de advertencia al conectarte por IP a equipos de tu propia red
 - Actualizar horario de la PC contra un servidor de hora público
+- Reparar IP (DHCP): para cuando la PC viene de otra red con IP fija y se queda sin internet (IP 169.254.x.x). Vuelve a pedir IP automática y hace un diagnóstico de dónde falla (red local, internet o DNS)
 - Test personalizado: ping, ping continuo, tracert, puertos
 
 ### 💻 Mantenimiento de PC

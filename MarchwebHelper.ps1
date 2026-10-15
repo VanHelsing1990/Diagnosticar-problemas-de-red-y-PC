@@ -5,7 +5,7 @@
 #
 # Version publica / gratuita de marchweb.com.ar
 
-param([switch]$Mantenimiento)
+param([switch]$Mantenimiento, [switch]$RepararDhcp)
 
 $ErrorActionPreference = 'SilentlyContinue'
 $ProgressPreference = 'SilentlyContinue'
@@ -1100,20 +1100,173 @@ function Actualizar-HorarioPC {
     Agregar-Resultado -Prueba "Actualizar horario PC" -Destino "hora.uv.es" -Estado "OK"
 }
 
+function Reparar-IpDhcp {
+    Titulo "REPARAR IP (DHCP)" "Hace que el adaptador de red vuelva a pedir IP automatica (DHCP). Util cuando la PC viene de otra red con IP fija y se queda sin internet (IP 169.254.x.x o DHCP deshabilitado)."
+    Log "Cuando usar esto: cuando la PC tenia una IP fija configurada a mano (de otra red/oficina) y ahora no anda nada de red, o cuando ves una IP que empieza con 169.254." "DarkGray"
+    Log "Necesita permisos de Administrador (los comandos netsh no funcionan sin eso)." "Yellow"
+    Log ""
+
+    $esAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+    if (-not $esAdmin) {
+        Log "Este programa no esta corriendo como Administrador. Esta opcion no va a funcionar sin eso." "Red"
+        $elevar = Read-Host "Queres reabrir el programa como Administrador ahora para hacer esto? (s/n)"
+        if ($elevar -ne "s") { Log "Cancelado." "DarkYellow"; return }
+        try {
+            Start-Process powershell -Verb RunAs -ArgumentList "-NoProfile -ExecutionPolicy Bypass -File `"$ScriptPath`" -RepararDhcp" -ErrorAction Stop
+            Write-Host "Se abrio una ventana nueva como Administrador. Esta ventana se va a cerrar." -ForegroundColor Cyan
+            exit
+        } catch {
+            Log "No se otorgaron los permisos de Administrador." "Red"
+            return
+        }
+    }
+
+    $continuar = Read-Host "Deseas ejecutar esto? (s/n)"
+    if ($continuar -ne "s") { Log "Cancelado." "DarkYellow"; return }
+
+    $adaptadoresTodos = Get-NetAdapter | Where-Object { $_.Status -eq 'Up' }
+    $adaptadores = $adaptadoresTodos | Where-Object {
+        $_.Name -notmatch "Conexion de area local\*|Wi-?Fi Direct|Virtual|Loopback|VMware|VirtualBox|Hyper-V|Bluetooth"
+    }
+    if (-not $adaptadores) { $adaptadores = $adaptadoresTodos }
+
+    if (-not $adaptadores) {
+        Log "No se encontraron adaptadores de red activos." "Red"
+        return
+    }
+
+    Log ""
+    Write-Host "Que adaptador queres reparar?"
+    $lista = @($adaptadores)
+    for ($i = 0; $i -lt $lista.Count; $i++) {
+        $tipo = if ($lista[$i].PhysicalMediaType -match "802.11") { "WIFI" } elseif ($lista[$i].PhysicalMediaType -match "802.3") { "CABLE" } else { "?" }
+        Write-Host ("  {0}. {1} ({2})" -f ($i + 1), $lista[$i].Name, $tipo)
+    }
+    $sel = Read-Host "Opcion"
+    $idx = 0
+    if (-not ([int]::TryParse($sel, [ref]$idx)) -or $idx -lt 1 -or $idx -gt $lista.Count) {
+        Log "Opcion invalida." "Red"
+        return
+    }
+    $nombre = $lista[$idx - 1].Name
+
+    function Obtener-EstadoAdaptadorDhcp {
+        param([string]$Nombre)
+        $info = Get-NetIPConfiguration -InterfaceAlias $Nombre -ErrorAction SilentlyContinue
+        $dhcpInfo = Get-NetIPInterface -InterfaceAlias $Nombre -AddressFamily IPv4 -ErrorAction SilentlyContinue
+        [pscustomobject]@{
+            IP      = if ($info -and $info.IPv4Address) { ($info.IPv4Address.IPAddress | Select-Object -First 1) } else { $null }
+            Mascara = if ($info -and $info.IPv4Address) { ($info.IPv4Address | Select-Object -First 1).PrefixLength } else { $null }
+            Gateway = if ($info) { ($info.IPv4DefaultGateway.NextHop | Select-Object -First 1) } else { $null }
+            DNS     = if ($info -and $info.DNSServer) { ($info.DNSServer.ServerAddresses -join ", ") } else { $null }
+            Dhcp    = if ($dhcpInfo) { $dhcpInfo.Dhcp } else { "Desconocido" }
+        }
+    }
+
+    function Mostrar-EstadoAdaptadorDhcp {
+        param($Estado)
+        $colorIp = if ($Estado.IP -match "^169\.254\.") { "Red" } elseif ($Estado.IP) { "Green" } else { "Red" }
+        Log ("IP              : {0}" -f ($(if ($Estado.IP) { $Estado.IP } else { "(sin IP)" }))) $colorIp
+        Log ("Mascara (CIDR)  : {0}" -f ($(if ($Estado.Mascara) { $Estado.Mascara } else { "-" })))
+        Log ("Gateway         : {0}" -f ($(if ($Estado.Gateway) { $Estado.Gateway } else { "(sin gateway)" })))
+        Log ("DNS             : {0}" -f ($(if ($Estado.DNS) { $Estado.DNS } else { "(sin DNS)" })))
+        Log ("DHCP habilitado : {0}" -f $Estado.Dhcp)
+    }
+
+    Log ""
+    Log "--- Estado ANTES ---" "Yellow"
+    $antes = Obtener-EstadoAdaptadorDhcp -Nombre $nombre
+    Mostrar-EstadoAdaptadorDhcp -Estado $antes
+
+    if ($antes.Dhcp -ne "Enabled") {
+        Log ""
+        Log "--- Habilitando DHCP para IP y DNS ---" "Yellow"
+        try {
+            netsh interface ipv4 set address name="$nombre" source=dhcp 2>&1 | ForEach-Object { Log $_ }
+        } catch {
+            Log ("Error al habilitar DHCP para la IP: {0}" -f $_) "Red"
+        }
+        try {
+            netsh interface ipv4 set dnsservers name="$nombre" source=dhcp 2>&1 | ForEach-Object { Log $_ }
+        } catch {
+            Log ("Error al habilitar DHCP para el DNS: {0}" -f $_) "Red"
+        }
+    } else {
+        Log ""
+        Log "DHCP ya estaba habilitado, no hace falta cambiarlo." "DarkGray"
+    }
+
+    Log ""
+    Log "--- Liberando la IP actual ---" "Yellow"
+    try { ipconfig /release "$nombre" | ForEach-Object { Log $_ } } catch { Log ("Error en /release: {0}" -f $_) "Red" }
+
+    Log ""
+    Log "--- Limpiando cache de DNS ---" "Yellow"
+    try { ipconfig /flushdns | ForEach-Object { Log $_ } } catch { Log ("Error en /flushdns: {0}" -f $_) "Red" }
+
+    Log ""
+    Log "--- Pidiendo IP nueva (puede tardar unos segundos) ---" "Yellow"
+    try { ipconfig /renew "$nombre" | ForEach-Object { Log $_ } } catch { Log ("Error en /renew: {0}" -f $_) "Red" }
+
+    Start-Sleep -Seconds 2
+
+    Log ""
+    Log "--- Estado DESPUES ---" "Yellow"
+    $despues = Obtener-EstadoAdaptadorDhcp -Nombre $nombre
+    Mostrar-EstadoAdaptadorDhcp -Estado $despues
+
+    Log ""
+    Log "--- Diagnostico ---" "Cyan"
+    if ($despues.IP -match "^169\.254\.") {
+        Log "No responde el servidor DHCP: revisar el cable de red, la boca/puerto donde esta conectado, o el switch/router." "Red"
+        Agregar-Resultado -Prueba "Reparar IP (DHCP)" -Destino $nombre -Estado "FALLA (sin respuesta DHCP)"
+    } elseif ($despues.IP -and $despues.Gateway) {
+        $pingGw = ping $despues.Gateway -n 2 -w 800
+        $okGw = [bool](($pingGw -join "`n") -match "Respuesta desde|Reply from")
+        $pingInternet = ping 8.8.8.8 -n 2 -w 800
+        $okInternet = [bool](($pingInternet -join "`n") -match "Respuesta desde|Reply from")
+        $resuelveDns = Resolve-DnsName -Name "google.com" -ErrorAction SilentlyContinue
+
+        if (-not $okGw) {
+            Log "Tiene IP pero no responde el gateway/router: revisar la conexion a la red local (cable/wifi, switch, router)." "Red"
+            Agregar-Resultado -Prueba "Reparar IP (DHCP)" -Destino $nombre -Estado "ALERTA (sin respuesta del gateway)"
+        } elseif (-not $okInternet) {
+            Log "La red local responde bien (gateway OK), pero no sale a Internet: puede ser el proveedor." "Yellow"
+            Agregar-Resultado -Prueba "Reparar IP (DHCP)" -Destino $nombre -Estado "ALERTA (sin salida a internet)"
+        } elseif (-not $resuelveDns) {
+            Log "Internet responde (8.8.8.8 OK) pero falla la resolucion de nombres (DNS): revisar los DNS configurados." "Yellow"
+            Agregar-Resultado -Prueba "Reparar IP (DHCP)" -Destino $nombre -Estado "ALERTA (falla DNS)"
+        } else {
+            Log "Todo OK: hay IP, responde el gateway, hay salida a Internet y el DNS resuelve bien." "Green"
+            Agregar-Resultado -Prueba "Reparar IP (DHCP)" -Destino $nombre -Estado "OK"
+        }
+    } else {
+        Log "No se pudo obtener una IP valida. Revisar la conexion fisica (cable) o el adaptador wifi." "Red"
+        Agregar-Resultado -Prueba "Reparar IP (DHCP)" -Destino $nombre -Estado "FALLA (sin IP)"
+    }
+}
+
 function Mostrar-MenuRed {
     Clear-Host
     Mostrar-Banner
     Write-Host "============================================================"
     Write-Host ("   TESTEO DE RED - {0}" -f $Sede.ToUpper())
     Write-Host "============================================================"
+    Write-Host " -- Diagnostico basico --" -ForegroundColor DarkCyan
     Write-Host " 1. Ver configuracion completa de red (ipconfig /all)"
     Write-Host " 2. Ver adaptadores de red activos (Wifi/Cable)"
     Write-Host " 3. CHEQUEO RAPIDO: esta caido Internet?"
     Write-Host " 4. Test de Velocidad: esta lento Internet?"
     Write-Host " 5. Test de Acceso Remoto (RDP)"
+    Write-Host ""
+    Write-Host " -- Cortes y monitoreo --" -ForegroundColor DarkCyan
     Write-Host " 6. Monitoreo continuo (Wifi/Cable/Internet que va y viene, estilo ping -t)"
+    Write-Host ""
+    Write-Host " -- Informacion de la red --" -ForegroundColor DarkCyan
     Write-Host " 7. Averiguar el proveedor de Internet (ISP) actual"
     Write-Host " 8. Ver dispositivos conectados a la red (PCs, impresoras, etc)"
+    Write-Host ""
+    Write-Host " -- Herramientas y arreglos --" -ForegroundColor DarkCyan
     Write-Host " 9. Test personalizado (ping/puerto)"
     Write-Host " 10. Arreglo rapido de red (renovar IP y limpiar DNS)"
     Write-Host " 11. Calidad de la conexion WiFi (intensidad, canal)"
@@ -1122,6 +1275,8 @@ function Mostrar-MenuRed {
     Write-Host " 14. Actualizar base de fabricantes (MAC) - HP, Epson, Zebra, Cisco, etc"
     Write-Host " 15. Omitir verificacion de identidad remota (RDP)"
     Write-Host " 16. Actualizar horario de la PC"
+    Write-Host " 17. Reparar IP (DHCP) - cuando quedo con IP fija de otra red"
+    Write-Host ""
     Write-Host " 0. Volver al menu principal"
     Write-Host "============================================================"
     Write-Host ""
@@ -1149,6 +1304,7 @@ function Start-MenuRed {
             "14" { Actualizar-BaseFabricantesMac }
             "15" { Omitir-VerificacionRemotoRDP }
             "16" { Actualizar-HorarioPC }
+            "17" { Reparar-IpDhcp }
             "0" { }
             default { Write-Host "Opcion invalida" -ForegroundColor Red }
         }
@@ -1488,19 +1644,27 @@ function Mostrar-MenuMantenimiento {
     Write-Host "============================================================"
     Write-Host "   MANTENIMIENTO DE PC - Disco y Sistema"
     Write-Host "============================================================"
+    Write-Host " -- Diagnostico de disco --" -ForegroundColor DarkCyan
     Write-Host " 1. Ver espacio en disco"
     Write-Host " 2. Ver salud del disco (S.M.A.R.T)"
+    Write-Host ""
+    Write-Host " -- Reparar disco y sistema --" -ForegroundColor DarkCyan
     Write-Host " 3. CHKDSK /F /R - Revisar y reparar el disco"
     Write-Host " 4. SFC /scannow - Verificar archivos de sistema"
     Write-Host " 5. DISM /RestoreHealth - Reparar la imagen de Windows"
+    Write-Host ""
+    Write-Host " -- Limpieza y optimizacion --" -ForegroundColor DarkCyan
     Write-Host " 6. Liberar espacio (temporales + papelera)"
     Write-Host " 7. Optimizar / desfragmentar disco"
+    Write-Host ""
+    Write-Host " -- Informacion y mantenimiento del equipo --" -ForegroundColor DarkCyan
     Write-Host " 8. Informacion general del equipo (CPU, RAM, uptime)"
     Write-Host " 9. Ver procesos que mas consumen CPU/memoria"
     Write-Host " 10. Reiniciar spooler de impresion (impresora no imprime)"
     Write-Host " 11. Estado del antivirus (Windows Defender)"
     Write-Host " 12. Ver programas que arrancan con Windows"
     Write-Host " 13. Errores recientes (Visor de Eventos)"
+    Write-Host ""
     Write-Host " 0. Volver al menu principal"
     Write-Host "============================================================"
     Write-Host ""
@@ -1619,6 +1783,10 @@ function Mostrar-MenuPrincipal {
 Reset-Buffer
 if ($Mantenimiento) {
     Start-MenuMantenimiento
+} elseif ($RepararDhcp) {
+    Reparar-IpDhcp
+    Write-Host ""
+    Read-Host "Presiona ENTER para continuar"
 } else {
     Clear-Host
     Mostrar-Banner -Animado
