@@ -56,21 +56,21 @@ Para personalizar el nombre que aparece en los menús, editar el archivo `config
 }
 ```
 
-### Panel web opcional (ver el estado desde el navegador)
+### Panel web opcional (ver los testeos en vivo desde el navegador)
 
-El Monitoreo continuo (opción de Testeo de Red) puede mandar cada corte/recuperación a un panel web propio, para poder ver el estado de la red desde cualquier navegador sin tener la PC delante. Es opcional y viene desactivado por defecto.
+Cualquier opción de **Testeo de Red** (las de Mantenimiento de PC quedan afuera a propósito) puede quedar publicada en un panel web propio: el programa pregunta un nombre para identificar el testeo, lo manda a un hosting propio, y desde cualquier navegador se puede ver la lista de testeos — el que está corriendo en ese momento aparece marcado como **EN VIVO**, y haciendo clic se ve el detalle actualizándose solo. Pensado para que un compañero de sistemas pueda ver cómo viene un testeo sin estar sentado frente a esa PC. Es opcional y viene desactivado por defecto.
 
-Para activarlo, hace falta tener un hosting propio con PHP y MySQL, armar ahí un pequeño endpoint que reciba los datos (no incluido en este repositorio por simplicidad), y agregar estas dos claves al `config.json`:
+Para activarlo hace falta un hosting propio con PHP y MySQL (no incluido en este repositorio por simplicidad — son unos 10 archivos PHP chicos), y agregar estas dos claves al `config.json`, apuntando a la carpeta donde subas esos archivos:
 
 ```json
 {
     "Sede": "Mi Empresa",
-    "WebMonitorUrl": "https://tu-dominio.com/ruta/api.php",
+    "WebMonitorUrl": "https://tu-dominio.com/ruta",
     "WebMonitorKey": "una-clave-secreta-que-vos-elijas"
 }
 ```
 
-Si estos campos no están configurados, el programa funciona exactamente igual, solo que no manda nada a ningún lado.
+Si estos campos no están configurados, el programa funciona exactamente igual, solo que no manda nada a ningún lado ni pregunta ningún nombre.
 
 ## Licencia y condiciones de uso
 

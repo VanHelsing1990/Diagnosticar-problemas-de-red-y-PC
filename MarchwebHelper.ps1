@@ -48,6 +48,9 @@ function Log {
     if ($script:ArchivoTesteoActual) {
         try { Add-Content -Path $script:ArchivoTesteoActual -Value $Texto -Encoding UTF8 } catch {}
     }
+    if ($script:PruebaWebId -and -not [string]::IsNullOrWhiteSpace($Texto)) {
+        $script:LineasPruebaWeb += $Texto
+    }
 }
 
 function Iniciar-ArchivoTesteo {
@@ -421,21 +424,55 @@ function Formatear-Duracion {
     return ("{0}m {1}s" -f [int]$ts.TotalMinutes, $ts.Seconds)
 }
 
-function Enviar-EventoWeb {
-    param([string]$Tipo, [string]$Estado, [string]$Detalle = "")
+function Iniciar-PruebaWeb {
+    param([string]$Tipo, [string]$TituloPorDefecto)
+    $script:PruebaWebId = $null
+    $script:LineasPruebaWeb = @()
     if ([string]::IsNullOrWhiteSpace($WebMonitorUrl)) { return }
+
+    $titulo = Read-Host ("Nombre para este testeo en el panel web [Enter = '{0}']" -f $TituloPorDefecto)
+    if ([string]::IsNullOrWhiteSpace($titulo)) { $titulo = $TituloPorDefecto }
+
     try {
-        $cuerpo = @{
-            key     = $WebMonitorKey
-            origen  = $env:COMPUTERNAME
-            tipo    = $Tipo
-            estado  = $Estado
-            detalle = $Detalle
-        } | ConvertTo-Json
-        Invoke-RestMethod -Uri $WebMonitorUrl -Method Post -Body $cuerpo -ContentType "application/json; charset=utf-8" -TimeoutSec 5 -ErrorAction Stop | Out-Null
+        $cuerpo = @{ key = $WebMonitorKey; titulo = $titulo; tipo = $Tipo; origen = $env:COMPUTERNAME } | ConvertTo-Json
+        $resp = Invoke-RestMethod -Uri "$WebMonitorUrl/iniciar_prueba.php" -Method Post -Body $cuerpo -ContentType "application/json; charset=utf-8" -TimeoutSec 5 -ErrorAction Stop
+        if ($resp.ok) { $script:PruebaWebId = $resp.id }
     } catch {
-        # Si falla el envio (sin internet, panel caido, etc) no interrumpe el monitoreo local.
+        # Si falla el envio (sin internet, panel caido, etc) el testeo local sigue andando igual.
     }
+}
+
+function Agregar-LineaWeb {
+    param([string]$Texto)
+    if (-not $script:PruebaWebId -or [string]::IsNullOrWhiteSpace($Texto)) { return }
+    try {
+        $cuerpo = @{ key = $WebMonitorKey; prueba_id = $script:PruebaWebId; texto = $Texto } | ConvertTo-Json
+        Invoke-RestMethod -Uri "$WebMonitorUrl/agregar_linea.php" -Method Post -Body $cuerpo -ContentType "application/json; charset=utf-8" -TimeoutSec 5 -ErrorAction Stop | Out-Null
+    } catch {}
+}
+
+function Actualizar-PruebaWeb {
+    if (-not $script:PruebaWebId) { return }
+    try {
+        $cuerpo = @{ key = $WebMonitorKey; prueba_id = $script:PruebaWebId } | ConvertTo-Json
+        Invoke-RestMethod -Uri "$WebMonitorUrl/actualizar_prueba.php" -Method Post -Body $cuerpo -ContentType "application/json; charset=utf-8" -TimeoutSec 5 -ErrorAction Stop | Out-Null
+    } catch {}
+}
+
+function Finalizar-PruebaWeb {
+    if (-not $script:PruebaWebId) { return }
+    if ($script:LineasPruebaWeb -and @($script:LineasPruebaWeb).Count -gt 0) {
+        try {
+            $cuerpo = @{ key = $WebMonitorKey; prueba_id = $script:PruebaWebId; lineas = @($script:LineasPruebaWeb) } | ConvertTo-Json
+            Invoke-RestMethod -Uri "$WebMonitorUrl/agregar_lineas_batch.php" -Method Post -Body $cuerpo -ContentType "application/json; charset=utf-8" -TimeoutSec 15 -ErrorAction Stop | Out-Null
+        } catch {}
+    }
+    try {
+        $cuerpo = @{ key = $WebMonitorKey; prueba_id = $script:PruebaWebId } | ConvertTo-Json
+        Invoke-RestMethod -Uri "$WebMonitorUrl/finalizar_prueba.php" -Method Post -Body $cuerpo -ContentType "application/json; charset=utf-8" -TimeoutSec 5 -ErrorAction Stop | Out-Null
+    } catch {}
+    $script:PruebaWebId = $null
+    $script:LineasPruebaWeb = @()
 }
 
 function Mostrar-CronologiaCortes {
@@ -534,33 +571,35 @@ function Test-MonitoreoIntermitencias {
 
             if ($null -eq $estadoAnterior) {
                 if ($ok) {
-                    Write-Host ("[{0}] Arranca ACTIVO - con conexion" -f $ahora.ToString("HH:mm:ss")) -ForegroundColor Green
-                    Enviar-EventoWeb -Tipo $Destino -Estado "ACTIVO" -Detalle "Arranca el monitoreo"
+                    $linea = "[{0}] Arranca ACTIVO - con conexion" -f $ahora.ToString("HH:mm:ss")
+                    Write-Host $linea -ForegroundColor Green
                 } else {
-                    Write-Host ("[{0}] Arranca CAIDO - sin conexion" -f $ahora.ToString("HH:mm:ss")) -ForegroundColor Red
+                    $linea = "[{0}] Arranca CAIDO - sin conexion" -f $ahora.ToString("HH:mm:ss")
+                    Write-Host $linea -ForegroundColor Red
                     $inicioCorteActual = $ahora
-                    Enviar-EventoWeb -Tipo $Destino -Estado "CAIDO" -Detalle "Arranca el monitoreo, ya caido"
                 }
+                Agregar-LineaWeb -Texto $linea
                 $ultimoAviso = $ahora
             } elseif ($ok -and -not $estadoAnterior) {
                 $duracion = [math]::Round(($ahora - $inicioCorteActual).TotalSeconds, 1)
                 $cortes += [pscustomobject]@{ Inicio = $inicioCorteActual; Fin = $ahora; DuracionSeg = $duracion }
-                Write-Host ("[{0}] VOLVIO LA CONEXION -> estuvo caido {1} segundos (desde las {2})" -f $ahora.ToString("HH:mm:ss"), $duracion, $inicioCorteActual.ToString("HH:mm:ss")) -ForegroundColor Green
-                Enviar-EventoWeb -Tipo $Destino -Estado "ACTIVO" -Detalle ("Volvio, estuvo caido {0} segundos" -f $duracion)
+                $linea = "[{0}] VOLVIO LA CONEXION -> estuvo caido {1} segundos (desde las {2})" -f $ahora.ToString("HH:mm:ss"), $duracion, $inicioCorteActual.ToString("HH:mm:ss")
+                Write-Host $linea -ForegroundColor Green
+                Agregar-LineaWeb -Texto $linea
                 $ultimoAviso = $ahora
             } elseif (-not $ok -and $estadoAnterior) {
                 $inicioCorteActual = $ahora
-                Write-Host ("[{0}] SE CORTO - sin conexion" -f $ahora.ToString("HH:mm:ss")) -ForegroundColor Red
-                Enviar-EventoWeb -Tipo $Destino -Estado "CAIDO" -Detalle "Se corto ahora"
+                $linea = "[{0}] SE CORTO - sin conexion" -f $ahora.ToString("HH:mm:ss")
+                Write-Host $linea -ForegroundColor Red
+                Agregar-LineaWeb -Texto $linea
                 $ultimoAviso = $ahora
             } elseif (($ahora - $ultimoAviso).TotalSeconds -ge 10) {
                 if ($ok) {
                     Write-Host ("[{0}] Sigue activo, con conexion (sin cortes por ahora)" -f $ahora.ToString("HH:mm:ss")) -ForegroundColor DarkGray
-                    Enviar-EventoWeb -Tipo $Destino -Estado "ACTIVO" -Detalle "Sigue activo"
                 } else {
                     Write-Host ("[{0}] Sigue caido, sin conexion" -f $ahora.ToString("HH:mm:ss")) -ForegroundColor DarkGray
-                    Enviar-EventoWeb -Tipo $Destino -Estado "CAIDO" -Detalle "Sigue caido"
                 }
+                Actualizar-PruebaWeb
                 $ultimoAviso = $ahora
             }
 
@@ -663,48 +702,51 @@ function Test-MonitoreoDual {
 
             if (-not $huboMedicion) {
                 if ($tipoActual) {
-                    Write-Host ("[{0}] Arranca CAIDO - {1}" -f $ahora.ToString("HH:mm:ss"), $tipoActual) -ForegroundColor Red
+                    $linea = "[{0}] Arranca CAIDO - {1}" -f $ahora.ToString("HH:mm:ss"), $tipoActual
+                    Write-Host $linea -ForegroundColor Red
                     $inicioCorteActual = $ahora
                     $tipoCorteActual = $tipoActual
-                    Enviar-EventoWeb -Tipo $tipoActual -Estado "CAIDO" -Detalle "Arranca el monitoreo, ya caido"
                 } else {
-                    Write-Host ("[{0}] Arranca ARRIBA (router e internet OK)" -f $ahora.ToString("HH:mm:ss")) -ForegroundColor Green
-                    Enviar-EventoWeb -Tipo "RED" -Estado "ACTIVO" -Detalle "Arranca el monitoreo"
+                    $linea = "[{0}] Arranca ARRIBA (router e internet OK)" -f $ahora.ToString("HH:mm:ss")
+                    Write-Host $linea -ForegroundColor Green
                 }
+                Agregar-LineaWeb -Texto $linea
                 $huboMedicion = $true
                 $ultimoAviso = $ahora
             }
             elseif ($tipoActual -and -not $tipoAnterior) {
                 $inicioCorteActual = $ahora
                 $tipoCorteActual = $tipoActual
-                Write-Host ("[{0}] SE CORTO - {1}" -f $ahora.ToString("HH:mm:ss"), $tipoActual) -ForegroundColor Red
-                Enviar-EventoWeb -Tipo $tipoActual -Estado "CAIDO" -Detalle "Se corto ahora"
+                $linea = "[{0}] SE CORTO - {1}" -f $ahora.ToString("HH:mm:ss"), $tipoActual
+                Write-Host $linea -ForegroundColor Red
+                Agregar-LineaWeb -Texto $linea
                 $ultimoAviso = $ahora
             }
             elseif (-not $tipoActual -and $tipoAnterior) {
                 $duracion = [math]::Round(($ahora - $inicioCorteActual).TotalSeconds, 1)
                 $cortes += [pscustomobject]@{ Inicio = $inicioCorteActual; Fin = $ahora; DuracionSeg = $duracion; Tipo = $tipoCorteActual }
-                Write-Host ("[{0}] SE RECUPERO -> estuvo caido {1} segundos ({2}, desde las {3})" -f $ahora.ToString("HH:mm:ss"), $duracion, $tipoCorteActual, $inicioCorteActual.ToString("HH:mm:ss")) -ForegroundColor Green
-                Enviar-EventoWeb -Tipo "RED" -Estado "ACTIVO" -Detalle ("Volvio ({0}), estuvo caido {1} segundos" -f $tipoCorteActual, $duracion)
+                $linea = "[{0}] SE RECUPERO -> estuvo caido {1} segundos ({2}, desde las {3})" -f $ahora.ToString("HH:mm:ss"), $duracion, $tipoCorteActual, $inicioCorteActual.ToString("HH:mm:ss")
+                Write-Host $linea -ForegroundColor Green
+                Agregar-LineaWeb -Texto $linea
                 $ultimoAviso = $ahora
             }
             elseif ($tipoActual -and $tipoAnterior -and $tipoActual -ne $tipoAnterior) {
                 $duracion = [math]::Round(($ahora - $inicioCorteActual).TotalSeconds, 1)
                 $cortes += [pscustomobject]@{ Inicio = $inicioCorteActual; Fin = $ahora; DuracionSeg = $duracion; Tipo = $tipoCorteActual }
-                Write-Host ("[{0}] Cambia el tipo de corte: ahora es {1}" -f $ahora.ToString("HH:mm:ss"), $tipoActual) -ForegroundColor Red
+                $linea = "[{0}] Cambia el tipo de corte: ahora es {1}" -f $ahora.ToString("HH:mm:ss"), $tipoActual
+                Write-Host $linea -ForegroundColor Red
                 $inicioCorteActual = $ahora
                 $tipoCorteActual = $tipoActual
-                Enviar-EventoWeb -Tipo $tipoActual -Estado "CAIDO" -Detalle "Cambio el tipo de corte"
+                Agregar-LineaWeb -Texto $linea
                 $ultimoAviso = $ahora
             }
             elseif (($ahora - $ultimoAviso).TotalSeconds -ge 10) {
                 if ($tipoActual) {
                     Write-Host ("[{0}] Sigue caido - {1}" -f $ahora.ToString("HH:mm:ss"), $tipoActual) -ForegroundColor DarkGray
-                    Enviar-EventoWeb -Tipo $tipoActual -Estado "CAIDO" -Detalle "Sigue caido"
                 } else {
                     Write-Host ("[{0}] Sigue activo, router e internet OK" -f $ahora.ToString("HH:mm:ss")) -ForegroundColor DarkGray
-                    Enviar-EventoWeb -Tipo "RED" -Estado "ACTIVO" -Detalle "Sigue activo"
                 }
+                Actualizar-PruebaWeb
                 $ultimoAviso = $ahora
             }
 
@@ -1372,7 +1414,10 @@ function Start-MenuRed {
             "17" { "RepararIpDhcp" }
             default { $null }
         }
-        if ($nombreOpcionRed) { Iniciar-ArchivoTesteo $nombreOpcionRed }
+        if ($nombreOpcionRed) {
+            Iniciar-ArchivoTesteo $nombreOpcionRed
+            Iniciar-PruebaWeb -Tipo $nombreOpcionRed -TituloPorDefecto ("{0} - {1}" -f $nombreOpcionRed, (Get-Date -Format "dd/MM HH:mm"))
+        }
         switch ($opcionRed) {
             "1" { Mostrar-IpConfigAll }
             "2" { Menu-VerAdaptadores }
@@ -1395,7 +1440,10 @@ function Start-MenuRed {
             default { Write-Host "Opcion invalida" -ForegroundColor Red }
         }
         Mostrar-Resumen
-        if ($nombreOpcionRed) { Finalizar-ArchivoTesteo }
+        if ($nombreOpcionRed) {
+            Finalizar-ArchivoTesteo
+            Finalizar-PruebaWeb
+        }
         if ($opcionRed -ne "0") {
             Write-Host ""
             Read-Host "Presiona ENTER para volver"
@@ -1890,8 +1938,10 @@ if ($Mantenimiento) {
     Start-MenuMantenimiento
 } elseif ($RepararDhcp) {
     Iniciar-ArchivoTesteo "RepararIpDhcp"
+    Iniciar-PruebaWeb -Tipo "RepararIpDhcp" -TituloPorDefecto ("RepararIpDhcp - {0}" -f (Get-Date -Format "dd/MM HH:mm"))
     Reparar-IpDhcp
     Finalizar-ArchivoTesteo
+    Finalizar-PruebaWeb
     Write-Host ""
     Read-Host "Presiona ENTER para continuar"
 } else {
