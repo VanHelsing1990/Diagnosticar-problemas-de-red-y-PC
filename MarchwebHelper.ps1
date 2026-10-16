@@ -564,7 +564,7 @@ function Test-MonitoreoIntermitencias {
                 if ($tecla.Key -eq 'Q' -or $esCtrlC) { break }
             }
             $ahora = Get-Date
-            $r = ping $Destino -n 1 -w 1000
+            $r = ping $Destino -n 1 -w 2000
             $enviados++
             $ok = [bool](($r -join "`n") -match "Respuesta desde|Reply from")
             if ($ok) { $recibidos++ }
@@ -692,9 +692,9 @@ function Test-MonitoreoDual {
                 if ($tecla.Key -eq 'Q' -or $esCtrlC) { break }
             }
             $ahora = Get-Date
-            $rGw = ping $Gateway -n 1 -w 1000
+            $rGw = ping $Gateway -n 1 -w 2000
             $okGw = [bool](($rGw -join "`n") -match "Respuesta desde|Reply from")
-            $rNet = ping $Internet -n 1 -w 1000
+            $rNet = ping $Internet -n 1 -w 2000
             $okNet = [bool](($rNet -join "`n") -match "Respuesta desde|Reply from")
             $enviados++
 
